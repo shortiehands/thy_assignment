@@ -36,7 +36,6 @@
 # Purge the environment, load the modules we require.
 # Refer to https://violet.smu.edu.sg/origami/module/ for more information
 module purge
-module load Python/3.7.12
 
 # Create a virtual environment
 python3 -m venv ~/myenv
@@ -47,12 +46,11 @@ source ~/myenv/bin/activate
 
 # If you require any packages, install it as usual before the srun job submission.
 pip3 install numpy
-pip3 tqdm
-pip3 install random
+pip3 install tqdm
 pip3 install argparse
 pip3 install pathlib
 
 # Submit your job to the cluster
-srun ~/code/alns_main.py ~/code/psp_instances/sample_instances/S0.json 606
-srun ~/code/alns_main.py ~/code/psp_instances/sample_instances/S1.json 606
-srun ~/code/alns_main.py ~/code/psp_instances/sample_instances/S2.json 606
+srun ~/thy_assignment/code/alns_main.py ~/thy_assignment/code/psp_instances/sample_instances/S0.json 606
+srun ~/thy_assignment/code/alns_main.py ~/thy_assignment/code/psp_instances/sample_instances/S1.json 606
+srun ~/thy_assignment/code/alns_main.py ~/thy_assignment/code/psp_instances/sample_instances/S2.json 606
