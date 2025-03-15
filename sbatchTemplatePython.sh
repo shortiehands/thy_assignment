@@ -51,7 +51,7 @@ pip3 install argparse
 pip3 install pathlib
 
 # Submit your job to the cluster
-srun python /common/home/projectgrps/CS606/CS606G4/thy_assignment/code/alns_main.py ~/code/psp_instances/sample_instances/S0.json 606
-srun python /common/home/projectgrps/CS606/CS606G4/thy_assignment/code/alns_main.py ~/code/psp_instances/sample_instances/S1.json 606
-srun python /common/home/projectgrps/CS606/CS606G4/thy_assignment/code/alns_main.py ~/code/psp_instances/sample_instances/S2.json 606
+srun python /common/home/projectgrps/CS606/CS606G4/thy_assignment/code/alns_main.py ~/thy_assignment/code/psp_instances/sample_instances/S0.json 606
+srun python /common/home/projectgrps/CS606/CS606G4/thy_assignment/code/alns_main.py ~/thy_assignment/code/psp_instances/sample_instances/S1.json 606
+srun python /common/home/projectgrps/CS606/CS606G4/thy_assignment/code/alns_main.py ~/thy_assignment/code/psp_instances/sample_instances/S2.json 606
 
