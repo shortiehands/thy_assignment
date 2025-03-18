@@ -1,9 +1,11 @@
 import os
+import random
+import copy
 
 import gymnasium as gym
 import numpy as np
 import numpy.random as rnd
-from operators import *
+from operators import destroy_1, repair_1, repair_best_improvement, destroy_by_most_expensive
 from psp import PSP, Parser
 from src.alns import ALNS
 from src.settings import DATA_PATH
@@ -41,10 +43,11 @@ class pspAlnsEnv(gym.Env):
 
         self.cost_difference_from_best = None
         self.current_updated = None
+        self.last_action = None
 
         # # Simulated annealing acceptance criteria
-        # self.max_temperature = 5
-        # self.temperature = 5
+        self.max_temperature = 5
+        self.temperature = 5
 
         # Gym Environment Parameters
         self.reward = 0  # Total episode reward
@@ -59,12 +62,17 @@ class pspAlnsEnv(gym.Env):
         # ----------------------------------------------------------------------
         # // Modify action and observation space as you see fit
         # self.action_space = gym.spaces.MultiDiscrete([5, 5, 10, 100])
-        self.action_space = gym.spaces.MultiDiscrete([5, 5, 10])
+        self.action_space = gym.spaces.MultiDiscrete([1, 1, 10])
         # self.observation_space = gym.spaces.Box(shape=(8,), low=0, high=100, dtype=np.float64)
         self.observation_space = gym.spaces.Box(
             shape=(7,), low=0, high=100, dtype=np.float64
         )
-        # ----------------------------------------------------------------------
+
+        self.destory_success_rates = np.ones(5) * 0.5
+        self.repair_success_rates = np.ones(5) * 0.5
+        self.stagcount = 0
+        # ----------------------------------------------
+        # ------------------------
 
     def make_observation(self):
         """
@@ -145,7 +153,7 @@ class pspAlnsEnv(gym.Env):
         self.dr_alns = ALNS(self.rnd_state)
         self.dr_alns.add_destroy_operator(destroy_1)
 
-        self.dr_alns.add_repair_operator(repair_1)
+        self.dr_alns.add_repair_operator(repair_best_improvement)
 
         # reset tracking values
         # // Add code here to reset the additional
@@ -154,9 +162,12 @@ class pspAlnsEnv(gym.Env):
         self.current_improved = 0
         self.current_updated = 0
         self.episode += 1
-        # self.temperature = self.max_temperature
+        self.temperature = self.max_temperature
         self.improvement = 0
         self.cost_difference_from_best = 0
+        self.last_action = None
+        self.destory_success_rates = np.ones(5) * 0.5
+        self.repair_success_rates = np.ones(5) * 0.5
 
         self.iteration, self.reward = 0, 0
         self.done = False
@@ -174,6 +185,9 @@ class pspAlnsEnv(gym.Env):
         self.current_improved = 0
         # // Add code here to "step" the additional
         # observation states that you defined
+
+        self.last_action = action
+        self.temperature = self.max_temperature * max(0.01, 1 - self.iteration / self.max_iterations)
 
         current = self.current_solution
         best = self.best_solution
@@ -196,7 +210,7 @@ class pspAlnsEnv(gym.Env):
         destory_factor = factors[action[2]]
         # self.temperature = (1/(action[3]+1)) * self.max_temperature
 
-        destroyed = d_operator(current, self.rnd_state, destory_factor)
+        destroyed = d_operator(current, self.rnd_state)
 
         r_name, r_operator = self.dr_alns.repair_operators[r_idx]
         candidate = r_operator(destroyed, self.rnd_state)
@@ -220,57 +234,84 @@ class pspAlnsEnv(gym.Env):
     def reward_and_update(self, new_best, best, new_current, current):
         # ------------------------------------------------------------
         # // Modify Reward Function Here as you see fit
-        if new_best != best and new_best is not None:
-            # found new best solution
-            self.best_solution = new_best
-            self.current_solution = new_best
-            self.current_updated = 1
-            self.reward += 5
-            self.stagcount = 0
-            self.current_improved = 1
 
-        elif new_current != current and new_current.objective() > current.objective():
-            # solution accepted
-            self.current_solution = new_current
-            self.current_updated = 1
-            self.current_improved = 1
+        if self.last_action is not None:
+            d_idx, r_idx = self.last_action[0], self.last_action[1]
+            success = False
 
-        elif new_current != current and new_current.objective() <= current.objective():
-            self.current_solution = new_current
-            self.current_updated = 1
+            if new_best != best and new_best is not None:
+                # found new best solution
+                self.best_solution = new_best
+                self.current_solution = new_best
+                self.current_updated = 1
+                improvement_ratio = (best.objective() - new_best.objective()) / best.objective()
+                self.reward += 10 +20 * improvement_ratio
+                self.stagcount = 0
+                self.current_improved = 1
+                success = True
+
+            elif new_current != current and new_current.objective() > current.objective():
+                # solution accepted
+                self.current_solution = new_current
+                self.current_updated = 1
+                self.current_improved = 1
+                improvement_ratio = (current.objective() - new_current.objective()) / current.objective()
+                self.reward += 2 + 5 * improvement_ratio
+                success = True
+
+            elif new_current != current and new_current.objective() <= current.objective():
+                self.current_solution = new_current
+                self.current_updated = 1
+                self.reward += 0.5
+
+            if self.stagcount > 10:
+                self.reward -= 0.2
+
+            if success:
+                self.destory_success_rates[d_idx] = 0.9 * self.destory_success_rates[d_idx] + 0.1
+                self.repair_success_rates[r_idx] = 0.9 * self.repair_success_rates[r_idx] + 0.1
+        
+            else: 
+                self.destory_success_rates[d_idx] = 0.9 * self.destory_success_rates[d_idx]
+                self.repair_success_rates[r_idx] = 0.9 * self.repair_success_rates[r_idx]
 
         if new_current.objective() > current.objective():
             self.improvement = 1
         # ------------------------------------------------------------
 
-    def consider_candidate(self, best, curr, cand):
-        # -----------------------------------------------------
-        # // Modify acceptance criteria as you see fit
-        # Hill Climbing
-        if cand.objective() < best.objective():
-            return cand, cand
-        else:
-            return None, curr
+    # def consider_candidate(self, best, curr, cand):
+    #     # -----------------------------------------------------
+    #     # // Modify acceptance criteria as you see fit
 
+    #     # Hill Climbing
+    #     if cand.objective() < best.objective():
+    #         return cand, cand
+    #     else:
+    #         return None, curr
+        
+        
         # // You could try other strategies like:
         # 1. Simulated Annealing ?
         # 2. Record to Record Travel ?
         # ------------------------------------------------------
 
-    # def consider_candidate(self, best, curr, cand):
-    #     # Simulated Annealing
-    #
-    #     diff = curr.objective() - cand.objective()
-    #     probability = np.exp(diff / self.temperature)
-    #     if cand.objective() < best.objective():
-    #         return cand, cand
-    #
-    #     # accepted:
-    #     elif probability >= rnd.random():
-    #         return None, cand
-    #
-    #     else:
-    #         return None, curr
+    def consider_candidate(self, best, curr, cand):
+        # Always accept if better than best
+        if cand.objective() < best.objective():
+            return cand, cand
+            
+        # Simulated annealing for accepting worse solutions
+        diff = curr.objective() - cand.objective()
+        
+        # Prevent division by zero by ensuring temperature is always at least 0.1
+        temp = max(0.1, self.temperature)
+        probability = np.exp(diff / temp)
+        
+        # Accept based on probability
+        if np.random.random() < probability:
+            return None, cand  # Accept but don't update best
+        else:
+            return None, curr  # Reject
 
     # --------------------------------------------------------------------------------------------------------------------
 

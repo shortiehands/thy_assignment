@@ -20,7 +20,7 @@ def destroy_1(current: PSP, random_state):
     """
     destroyed = current.copy()
     
-    removal_frac = 0.2
+    removal_frac = 0.15
 
     # Gather all tasks currently assigned to workers
     assigned_tasks = []
@@ -42,59 +42,66 @@ def destroy_1(current: PSP, random_state):
                 w.remove_task(task.id)
                 break
 
-    # 7. Update destroyed.unassigned accordingly
+    # Update destroyed.unassigned accordingly
     assigned_now = [t for w in destroyed.workers for t in w.tasks_assigned]
     destroyed.unassigned = [t for t in destroyed.tasks if t not in assigned_now]
 
     return destroyed
-
-def destroy_block_based(current: PSP, random_state):
+def destroy_by_most_expensive(current: PSP, random_state):
+    """Destroy operator that prioritizes removing expensive tasks
+    Args:
+        current::PSP
+            a PSP object before destroying
+        random_state::numpy.random.RandomState
+            a random state specified by the random seed
+    Returns:
+        destroyed::PSP
+            the PSP object after destroying
+    """
     destroyed = current.copy()
-    # For each worker with a block assigned, randomly select a day and remove all tasks on that day.
-    for w in destroyed.workers:
-        if w.blocks:
-            day = random_state.choice(list(w.blocks.keys()))
-            # Remove every task assigned on that day.
-            tasks_in_day = [t for t in w.tasks_assigned if t.day == day]
-            for task in tasks_in_day:
-                w.remove_task(task.id)
-    # Update unassigned tasks list.
-    assigned_now = [t for w in destroyed.workers for t in w.tasks_assigned]
-    destroyed.unassigned = [t for t in destroyed.tasks if t not in assigned_now]
-    return destroyed
-
-def destroy_cost_based(current: PSP, random_state):
-    destroyed = current.copy()
-    removal_frac = 0.2  # Remove 20% of assignments
-    task_marginal_cost = []
     
-    # Evaluate each assigned task for its marginal cost impact
+    removal_frac = 0.2
+
+    # Calculate cost contribution for each task
+    task_costs = []
     for w in destroyed.workers:
         for task in w.tasks_assigned:
+            # Store the original cost
             original_cost = w.get_objective()
-            # Temporarily remove the task to compute the change
+            
+            # Temporarily remove the task to see how cost changes
             w.remove_task(task.id)
             new_cost = w.get_objective()
-            cost_diff = original_cost - new_cost  # improvement if removed
-            # Reassign task for now so we can decide later
+            cost_saving = original_cost - new_cost
+            
+            # Put the task back
             w.assign_task(task)
-            task_marginal_cost.append((task, cost_diff))
+            
+            # Store the task and its cost contribution
+            task_costs.append((task, cost_saving))
     
-    # Sort tasks: highest cost contribution first
-    task_marginal_cost.sort(key=lambda x: x[1], reverse=True)
-    num_remove = int(len(task_marginal_cost) * removal_frac)
-    tasks_to_remove = [t for t, _ in task_marginal_cost[:num_remove]]
+    # Sort tasks by cost contribution (most expensive first)
+    task_costs.sort(key=lambda x: x[1], reverse=True)
     
-    # Remove the selected tasks
+    # Determine how many tasks to remove
+    num_remove = int(len(task_costs) * removal_frac)
+    if num_remove < 1:
+        return destroyed  # If there's <1 to remove, just return unchanged
+    
+    # Take the most expensive tasks
+    tasks_to_remove = [task for task, _ in task_costs[:num_remove]]
+    
+    # Remove them from the copy
     for task in tasks_to_remove:
         for w in destroyed.workers:
             if task in w.tasks_assigned:
                 w.remove_task(task.id)
                 break
-    
-    # Update the list of unassigned tasks
+
+    # Update destroyed.unassigned accordingly
     assigned_now = [t for w in destroyed.workers for t in w.tasks_assigned]
     destroyed.unassigned = [t for t in destroyed.tasks if t not in assigned_now]
+
     return destroyed
 
 
@@ -152,21 +159,39 @@ def repair_1(destroyed: PSP, random_state):
 
 def repair_best_improvement(destroyed: PSP, random_state):
     new_state = destroyed.copy()
-    # Process unassigned tasks in order (e.g., by day and hour)
-    new_state.unassigned.sort(key=lambda t: (t.day, t.hour))
+    
+    # Helper function to determine task priority
+    def task_priority(task):
+        eligible_workers = []
+        for w in new_state.workers:
+            if w.can_assign(task):
+                eligible_workers.append(w)
+        
+        # Count of eligible workers (fewer is higher priority)
+        count = len(eligible_workers)
+        
+        # Average rate of eligible workers (lower is better)
+        avg_rate = sum(w.rate for w in eligible_workers) / count if count > 0 else float('inf')
+        
+        return (count, avg_rate, task.day, task.hour)
+    
+    # Sort unassigned tasks by: fewer eligible workers, lower average cost, then day/hour
+    new_state.unassigned.sort(key=task_priority)
     still_unassigned = []
     
     for task in new_state.unassigned:
         best_worker = None
         best_increase = float('inf')
+        
         for w in new_state.workers:
             if w.can_assign(task):
                 original_obj = w.get_objective()
                 w.assign_task(task)
                 new_obj = w.get_objective()
                 cost_increase = new_obj - original_obj
-                # Remove task again to test other possibilities.
+                # Remove task again to test other possibilities
                 w.remove_task(task.id)
+                
                 if cost_increase < best_increase:
                     best_increase = cost_increase
                     best_worker = w
@@ -178,36 +203,4 @@ def repair_best_improvement(destroyed: PSP, random_state):
     
     new_state.unassigned = still_unassigned
     return new_state
-
-def swap_reassign_operator(current: PSP, random_state):
-    new_state = current.copy()
-    # Randomly pick two workers.
-    if len(new_state.workers) < 2:
-        return new_state
-    w1, w2 = random_state.choice(new_state.workers, 2, replace=False)
-    if not w1.tasks_assigned or not w2.tasks_assigned:
-        return new_state
-    # Randomly choose a task from each.
-    task1 = random_state.choice(w1.tasks_assigned)
-    task2 = random_state.choice(w2.tasks_assigned)
-    
-    # Check feasibility for swapping: worker1 can take task2 and worker2 can take task1.
-    if w1.can_assign(task2) and w2.can_assign(task1):
-        # Remove tasks from their original workers.
-        w1.remove_task(task1.id)
-        w2.remove_task(task2.id)
-        # Attempt the swap.
-        if w1.can_assign(task2) and w2.can_assign(task1):
-            w1.assign_task(task2)
-            w2.assign_task(task1)
-        else:
-            # If swap fails, revert.
-            w1.assign_task(task1)
-            w2.assign_task(task2)
-    
-    # Update unassigned tasks
-    assigned_now = [t for w in new_state.workers for t in w.tasks_assigned]
-    new_state.unassigned = [t for t in new_state.tasks if t not in assigned_now]
-    return new_state
-
 

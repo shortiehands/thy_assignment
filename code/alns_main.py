@@ -2,7 +2,7 @@ import os
 import argparse
 
 import numpy.random as rnd
-from operators import destroy_1, repair_1, repair_best_improvement, swap_reassign_operator, destroy_block_based, destroy_cost_based
+from operators import destroy_1, destroy_by_most_expensive, repair_1, repair_best_improvement
 from psp import PSP, Parser
 from src.alns import ALNS
 from src.alns.criteria import *
@@ -27,7 +27,7 @@ if __name__ == "__main__":
     psp = PSP(parsed.name, parsed.workers, parsed.tasks, parsed.Alpha)
 
     # construct random initialized solution
-    psp.random_initialize(seed)
+    psp.random_initialize2(seed)
 
     print("Initial solution objective is {}.".format(psp.objective()))
 
@@ -46,21 +46,43 @@ if __name__ == "__main__":
     alns.add_destroy_operator(destroy_1)
     # alns.add_destroy_operator(destroy_block_based)
     # alns.add_destroy_operator(destroy_cost_based)
+    # alns.add_destroy_operator(destory_for_unassigned)
+    # alns.add_destroy_operator(destroy_by_most_expensive)
 
 
     # // add repair operators
-    alns.add_repair_operator(repair_1)
-    # alns.add_repair_operator(repair_best_improvement)
-    # alns.add_repair_operator(swap_reassign_operator)
+    # alns.add_repair_operator(repair_1)
+    alns.add_repair_operator(repair_best_improvement)
     # -----------------------------------------------------------------
 
     # run ALNS & Select Criterion
-    criterion = HillClimbing()
+    criterion = HillClimbing()  # // Modify with your criterion
 
+    ## Base Omega and Lambda ##
+    omegas = [40,25,10,0]  # // Select the weights adjustment strategy
+    lambda_ = 0.9  # // Select the decay parameter
+
+    result = alns.iterate(
+        psp, omegas, lambda_, criterion, iterations=10000, collect_stats=True
+    )  # // Modify number of ALNS iterations as you see fit
+
+    # result
+    solution = result.best_state
+    objective = solution.objective()
+
+
+    print("Best heuristic objective is {}.".format(objective))
+    
+    # print("Best heuristic objective is {}.".format(best_solution.objective()))
+
+    # visualize final solution and generate output file
+    save_output("THY_ALNS", solution, "solution")  # // Modify with your name
+
+### ======================================================== ###
     ## Trying adaptive omega and lambda ##
 
     def adaptive_results():
-        omegas = [40,20,5,0]  # // Select the weights adjustment strategy
+        omegas = [20,10,2,0]  # // Select the weights adjustment strategy
         current_omega = omegas.copy()
         current_lambda = 0.6  # // Select the decay parameter
 
@@ -107,23 +129,3 @@ if __name__ == "__main__":
 
     # solution = adaptive_results()
     # objective = solution.objective()
-
-    ## Base Omega and Lambda ##
-    omegas = [40,20,5,0]  # // Select the weights adjustment strategy
-    lambda_ = 0.8  # // Select the decay parameter
-
-    result = alns.iterate(
-        psp, omegas, lambda_, criterion, iterations=1000, collect_stats=True
-    )  # // Modify number of ALNS iterations as you see fit
-
-    # result
-    solution = result.best_state
-    objective = solution.objective()
-
-
-    print("Best heuristic objective is {}.".format(objective))
-    
-    # print("Best heuristic objective is {}.".format(best_solution.objective()))
-
-    # visualize final solution and generate output file
-    save_output("THY_ALNS", solution, "solution")  # // Modify with your name
